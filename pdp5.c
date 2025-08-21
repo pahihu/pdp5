@@ -7,6 +7,8 @@
 #include "curterm.h"
 #include "version.h"
 
+#define O   printf
+
 typedef unsigned short  Word;
 typedef enum {OFF, ON} Toggle;
 Word L, AC, PC, SR, M[4096];
@@ -131,26 +133,48 @@ void reset(void)
 
 void decode(Word a)
 {
-    static char *ops[] = {"and", "tad", "isz", "dca", "jms", "jmp", "iot", "opr"};
-    Word IR, Y;
-    unsigned x;
+    static char*     ops[] = {"and", "tad", "isz", "dca", "jms", "jmp", "iot", "opr"};
+    static char*    opr1[] = {"cla", "cll", "cma", "cml", "rar", "ral", "SSS", "iac"};
+    static char* opr1alt[] = {"cla", "cll", "cma", "cml", "rtr", "rtl", "SSS", "iac"};
+    static char*    opr2[] = {"cla", "sma", "sza", "snl", "SSS", "osr", "hlt", "???"};
+    static char* opr2alt[] = {"cla", "spa", "sna", "szl", "SSS", "osr", "hlt", "???"};
+    char **oprs, *op;
+    Word IR, Y, mask;
+    unsigned x, i, out;
 
     IR = M[a];
     Y = Y_MASK & IR;
     if (P(IR)) Y += (PAGE_MASK & a);
     x = IR >> 9;
     switch(x){
-    case  6: printf("iot %02o,%1o  ", DEV(IR), IOP(IR)); break;
-    case  7: printf("opr %d,%03o ", OPR(IR) ? 2 : 1, 00377 & IR); break;
-    default: printf("%s %c %04o", ops[x], I(IR) ? 'i' : ' ', Y);
+    case  6: O("iot %02o,%1o  ", DEV(IR), IOP(IR)); break;
+    case  7: O("opr %d,%03o ", OPR(IR) ? 2 : 1, 00377 & IR); break;
+        if (OPR(IR)) { /*OPR2*/
+            oprs = BIT8 & IR ? opr2alt : opr2;
+        } else { /*OPR1*/
+            oprs = BIT10 & IR ? opr1alt : opr1;
+        }
+        mask = BIT4; out = 0;
+        for (i = 4; i < 12; i++, mask >>= 1) {
+            op = oprs[i-4];
+            if ('S' == *op)
+                continue;
+            if (mask & IR) {
+                if (out) O(" V ");
+                O("%s", op);
+                out = 1;
+            }
+        }
+        break;
+    default: O("%s %c %04o", ops[x], I(IR) ? 'i' : ' ', Y);
     } 
 }
 
 void status(void)
 {
-    printf("%04o: %04o   ", PC, M[PC]);
+    O("%04o: %04o   ", PC, M[PC]);
     decode(PC);
-    printf(" L:AC=%1d:%04o IEN:%d INT:%d (T=%u)\n", L, AC, IEN, INT, T);
+    O(" L:AC=%1d:%04o IEN:%d INT:%d (T=%u)\n", L, AC, IEN, INT, T);
 }
 
 void step(void)
@@ -185,9 +209,9 @@ void step(void)
         if (OPR(IR)) { /*OPR2*/
             cond = 0;
             /* Event1 ----------------- */
-            if (BIT5 & IR) /*SMA*/ cond = cond || (SIGN_BIT & AC);
-            if (BIT6 & IR) /*SZA*/ cond = cond || (0 == AC);
-            if (BIT7 & IR) /*SNL*/ cond = cond || (1 == L);
+            if (BIT5 & IR) /*SMA*/ cond = cond || (SIGN_BIT & AC); /*SPA*/
+            if (BIT6 & IR) /*SZA*/ cond = cond || (0 == AC);       /*SNA*/
+            if (BIT7 & IR) /*SNL*/ cond = cond || (1 == L);        /*SZL*/
             if (BIT8 & IR) cond = !cond;
             /* Event2 ----------------- */
             if (BIT4 & IR) /*CLA*/ AC = 0;
@@ -244,7 +268,38 @@ void finish(void)
 }
 
 #define strpfx(x,y)  strncmp(x,y,strlen(x))
-#define octal(x)     sscanf(buf,"%ho",(x))
+#define IsSpace(x)   ((x) < 33)
+
+const char *S;
+int Scan(char *d)
+{
+    int n;
+
+    while (*S && IsSpace(*S)) S++;
+
+    n = 0;
+    while (*S && !IsSpace(*S)) {
+        d[n++] = *S++;
+    }
+    d[n] = 0;
+    return n;
+}
+
+int Octal(Word *adr)
+{
+    Word w;
+    char buf[80];
+    int i;
+
+    if (!Scan(buf))
+        return 0;
+    w = 0;
+    for (i = 0; buf[i]; i++) {
+        w = 8 * w + (07 & (buf[i] - '0'));
+    }
+    *adr = w;
+    return 1;
+}
 
 void cli(void)
 {
@@ -253,11 +308,11 @@ void cli(void)
     char buf[80], cmd[80];
     int i;
 
-    printf("PDP-5   %s\n", VERSION);
+    O("PDP-5   %s\n", VERSION);
 
     SR = 0; reset(); cmd[0] = 0;
     for (;;) {
-        printf("] ");
+        O("] ");
         buf[0] = 0;
         if (!fgets(buf, sizeof(buf)-1, stdin))
             exit(0);
@@ -265,39 +320,40 @@ void cli(void)
         if (!strlen(buf)) {
             strcpy(buf, cmd);
         }
+        S = buf; Scan(cmd);
         for (i = 0; cmds[i]; i++) {
-            if (!strpfx(buf,cmds[i]))
+            if (!strpfx(cmd,cmds[i]))
                 break;
         }
         switch (i) {
         case 0: /*continue*/ HLT = OFF; PC = SR; run(); break;
-        case 1: /*deposit*/  while (octal(&w)) { M[SR++] = w; } break;
+        case 1: /*deposit*/  while (Octal(&w)) { M[SR++] = w; } break;
         case 2: /*examine*/
             w = SR + 8;
-            if (octal(&adr)) {
+            if (Octal(&adr)) {
                 SR = adr;
-                w = octal(&adr) ? adr : SR + 8;
+                w = Octal(&adr) ? adr : SR + 8;
             }
             for (; SR < w; SR++) {
-                printf("%04o: %04o   ", SR, M[SR]);
+                O("%04o: %04o   ", SR, M[SR]);
                 decode(SR);
-                printf("\n");
+                O("\n");
             }
             break;
         case 3: /*help*/
-Help:       printf("\tcontinue                continue program\n");
-            printf("\tdeposit val [...val]    deposit value(s) in memory\n");
-            printf("\texamine [start [end]]   examine memory\n");
-            printf("\thelp                    print help\n");
-            printf("\tload adr                load val into SR\n");
-            printf("\tquit                    quit\n");
-            printf("\tstart [adr]             start program\n");
-            printf("\tstep [n]                step program\n");
+Help:       O("\tcontinue                continue program\n");
+            O("\tdeposit val [...val]    deposit value(s) in memory\n");
+            O("\texamine [start [end]]   examine memory\n");
+            O("\thelp                    print help\n");
+            O("\tload adr                load val into SR\n");
+            O("\tquit                    quit\n");
+            O("\tstart [adr]             start program\n");
+            O("\tstep [n]                step program\n");
             break;
-        case 4: /*load*/ octal(&SR); break;
+        case 4: /*load*/ Octal(&SR); break;
         case 5: /*quit*/ exit(0); break;
         case 6: /*start*/
-            if (octal(&adr)) SR = adr;
+            if (Octal(&adr)) SR = adr;
             fin = fopen("reader", "rt");
             fout = fopen("punch", "w+");
             atexit(finish);
@@ -306,7 +362,7 @@ Help:       printf("\tcontinue                continue program\n");
             break;
         case 7: /*step*/
             w = 1; PC = SR;
-            if (octal(&adr)) w = adr;
+            if (Octal(&adr)) w = adr;
             for (; w; w--) {
                 status(); step();
             }
