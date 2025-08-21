@@ -1,0 +1,48 @@
+ * PDP-5
+ * =====
+ *
+ * L,AC
+ * #define PC      M[0]
+ * #define PCSAV   M[1]
+ * #define INTADR  2
+ * 10-17 auto-indexing locations (when accessed incremented by 1)
+ * states: P, F, E1, E2
+ *      P/  P = P+1;
+ *      F/  IR = M[PC];
+ *      E1/
+ *      E2/ JMS write PC to Y
+ *      D/  when bit3 is 1 (defer)
+ *      B/  break for interrupts, JMP/JMS the instr jumped to is executed
+ *      
+ * switches
+ *     SR              switch reg.
+ *     SINGLE STEP     break at each memory cycle
+ *     SINGLE INST     stop at completion of instr.
+ * keys
+ *     LOAD ADDRESS    MA = SR
+ *     START           L = AC = 0, INT off, P = MA
+ *     DEPOSIT         M[MA++] = SR
+ *     EXAMINE         AC = MB = M[MA++]
+ *     STOP            stop at memory cycle
+ *     CONTINUE        continue operation
+ *     LOCK SWITCH     disable all switches/keys except SR
+ * lamps
+ *     MEMORY ADDRESS
+ *     MEMORY BUFFER
+ *     ACCUMULATOR
+ *     INSTRUCTION
+ *     RUN
+ *     IN-OUT HALT
+ *     LINK
+ *     PROGRAM COUNTER, FETCH, EXECUTE, DEFER, BREAK
+ *     SINGLE STEP/SINGLE INST
+ *     POWER
+ * 
+ *     6us cycle-time
+ *     0-5     memory reference instr.
+ *     6-7     augmented instr.
+ *     12/18/24us  memory reference, +6us for indirect addressing
+ *     12us    augmented/IOT/operate
+ *
+ */   
+
